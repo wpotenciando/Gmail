@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mailbox Sorter</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&display=swap">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root{--bg:#eef1ef;--panel:#fff;--ink:#1c2826;--mute:#667572;--line:#d9e0dd;--acc:#0f766e;--accInk:#fff;--sel:#d7ece8;--danger:#b4372c}
+@media(prefers-color-scheme:dark){:root{--bg:#121a19;--panel:#1a2423;--ink:#e6efed;--mute:#8fa19d;--line:#2b3837;--acc:#3cb8a9;--accInk:#08201d;--sel:#21403c;--danger:#ff8a7a}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:15px/1.45 Figtree,system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:7px 12px}
+button:hover{border-color:var(--acc)}
+button.primary{background:var(--acc);color:var(--accInk);border-color:var(--acc);font-weight:600}
+button.danger{color:var(--danger)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+input,select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.hide{display:none!important}
+/* setup */
+#setup{max-width:620px;margin:0 auto;padding:48px 20px}
+#setup h1{font-size:30px;margin:0 0 8px}
+#setup ol{padding-left:20px;color:var(--mute)}
+#setup li{margin:6px 0}
+#setup code{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:13px;word-break:break-all}
+.row{display:flex;gap:8px;margin:16px 0}
+.row input{flex:1}
+#err{color:var(--danger);margin-top:10px}
+/* app */
+#app{display:grid;grid-template-columns:250px 1fr;height:100%}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:16px 12px;overflow:auto}
+aside h2{font-size:15px;margin:0 8px 10px}
+.nav{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-radius:8px;cursor:pointer;gap:6px}
+.nav:hover{background:var(--bg)}
+.nav.on{background:var(--sel);font-weight:600}
+.nav.over{outline:2px dashed var(--acc);background:var(--sel)}
+.nav span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav .x{opacity:0;border:0;background:none;padding:0 4px;color:var(--mute)}
+.nav:hover .x,.nav .x:focus-visible{opacity:1}
+.sep{display:flex;align-items:center;justify-content:space-between;margin:18px 8px 6px;color:var(--mute);font-weight:600;font-size:13px}
+.sep button{padding:1px 9px}
+main{display:flex;flex-direction:column;min-width:0;height:100%}
+.bar{display:flex;gap:8px;align-items:center;padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.bar input[type=search]{flex:1;min-width:140px}
+#acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 16px;background:var(--sel);border-bottom:1px solid var(--line)}
+#list{flex:1;overflow:auto}
+.msg{display:grid;grid-template-columns:28px 190px 1fr 70px;gap:10px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--line);background:var(--panel);cursor:grab}
+.msg.sel{background:var(--sel)}
+.msg.unread .f,.msg.unread .s{font-weight:700}
+.msg .f,.msg .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg .t{color:var(--mute)}
+.msg .s{color:var(--ink)}
+.msg .d{color:var(--mute);font-size:13px;text-align:right}
+.msg a{color:inherit;text-decoration:none}
+.msg a:hover .s{text-decoration:underline}
+.empty{padding:40px 20px;color:var(--mute);text-align:center}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:8px}
+@media(max-width:760px){#app{grid-template-columns:1fr;grid-template-rows:auto 1fr}aside{border-right:0;border-bottom:1px solid var(--line);max-height:34vh}.msg{grid-template-columns:28px 1fr 56px}.msg .f{display:none}}
+
+.mute{color:var(--mute)}
+button,.nav,.msg{transition:transform .22s cubic-bezier(.2,.8,.2,1),background .2s,border-color .2s,box-shadow .2s,opacity .3s}
+button:active{transform:scale(.94)}
+html,#list,aside,#boxes{scroll-behavior:smooth}
+.nav:hover{transform:translateX(3px)}
+.nav.pop{animation:pop .55s}
+.nav[data-id="__boxes"]{background:var(--acc);color:var(--accInk);font-weight:600;margin-bottom:10px}
+.nav[data-id="__boxes"]:hover{filter:brightness(1.1)}
+.fresh .msg{animation:rise .4s both;animation-delay:calc(var(--i,0)*30ms)}
+.msg:hover{transform:translateX(4px);box-shadow:0 3px 12px rgba(0,0,0,.1);position:relative;z-index:1}
+.msg.dragging{opacity:.45;transform:scale(.97)}
+.msg.out{opacity:0;transform:translateX(70px) scale(.94)}
+#acts:not(.hide){animation:rise .3s}
+#toast:not(.hide){animation:toastIn .35s}
+#boxes{flex:1;overflow:auto;padding:28px;animation:fade .4s}
+#boxes.still *{animation:none!important}
+#boxes h1{margin:0 0 4px;font-size:30px}
+.stats{display:flex;gap:12px;margin:18px 0 10px;flex-wrap:wrap}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 20px;animation:rise .5s both}
+.stat b{display:block;font-size:28px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:26px;padding-top:26px}
+.box{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:6px 6px 14px 14px;padding:30px 18px 18px;cursor:pointer;animation:rise .55s both;animation-delay:calc(var(--i)*70ms);transition:transform .3s cubic-bezier(.2,.8,.2,1),box-shadow .3s}
+.box::before{content:"";position:absolute;left:-6px;right:-6px;top:-14px;height:26px;border-radius:8px;background:hsl(var(--h) 55% 52%);transform-origin:left bottom;transition:transform .35s cubic-bezier(.2,.8,.2,1)}
+.box:hover{transform:translateY(-8px);box-shadow:0 18px 30px -14px hsl(var(--h) 50% 35%/.6)}
+.box:hover::before{transform:rotate(-5deg) translateY(-7px)}
+.box:active{transform:translateY(-3px) scale(.97)}
+.box h3{margin:0 0 8px;overflow-wrap:anywhere}
+.box .n{font-size:36px;font-weight:700;line-height:1.1}
+.meter{height:6px;background:var(--bg);border-radius:9px;overflow:hidden;margin-top:14px}
+.meter i{display:block;height:100%;width:var(--w);background:hsl(var(--h) 55% 52%);border-radius:9px;transform-origin:left;animation:grow .9s .25s both cubic-bezier(.2,.8,.2,1)}
+.box.add{border-style:dashed;display:grid;place-items:center;min-height:150px;color:var(--mute);text-align:center}
+.box.add::before{display:none}
+.box.add span{display:block;font-size:36px;animation:float 3s ease-in-out infinite}
+@keyframes pop{0%{transform:scale(1)}30%{transform:scale(1.08);background:var(--sel)}60%{transform:scale(.97)}100%{transform:scale(1)}}
+@keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes grow{from{transform:scaleX(0)}}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,16px)}to{opacity:1;transform:translate(-50%,0)}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+[data-theme=xmas]{--bg:#f3efe9;--acc:#b3261e;--accInk:#fff;--sel:#f6dcd9}
+[data-theme=summer]{--bg:#fbf4e4;--acc:#d9700a;--accInk:#fff;--sel:#fbe4bd}
+[data-theme=rain]{--bg:#e9eff4;--acc:#2f6fa3;--accInk:#fff;--sel:#d3e3f1}
+@media(prefers-color-scheme:dark){[data-theme=xmas]{--bg:#161d17;--acc:#e0645c;--accInk:#220a08;--sel:#3a2321}[data-theme=summer]{--bg:#1d1913;--acc:#f0a23a;--accInk:#2a1700;--sel:#3b2e18}[data-theme=rain]{--bg:#10171d;--acc:#6aa8dc;--accInk:#08141e;--sel:#1d3345}}
+#fx{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:5}
+#fx span{position:absolute;top:-30px;opacity:.45;animation:fall linear infinite}
+@keyframes fall{to{transform:translate(30px,112vh) rotate(200deg)}}
+#toast{z-index:9}
+.tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
+.gear{position:absolute;right:8px;top:8px;border:0;background:none;padding:2px 6px;opacity:.5}
+.gear:hover{opacity:1}
+aside select{width:100%;margin-top:6px}
+
+.msg.reply{background:#fff6bf;box-shadow:inset 4px 0 0 #f2c200}
+.msg.reply.sel{background:#ffe97a}
+@media(prefers-color-scheme:dark){.msg.reply{background:#443b14}.msg.reply.sel{background:#5a4d12}}
+.tag{background:#f2c200;color:#3a2f00;border-radius:6px;padding:0 6px;font-size:11px;font-weight:700;margin-left:8px;white-space:nowrap}
+#modal{position:fixed;inset:0;z-index:20;display:grid;place-items:center;background:rgba(10,20,18,.45);backdrop-filter:blur(3px);animation:fade .25s;padding:20px}
+#mbox{position:relative;width:min(820px,100%);max-height:86vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:6px 6px 16px 16px;margin-top:24px;box-shadow:0 30px 60px -20px rgba(0,0,0,.55);animation:boxIn .55s cubic-bezier(.2,.9,.3,1.15)}
+#mbox .lid{position:absolute;left:-8px;right:-8px;top:-22px;height:30px;border-radius:10px;background:var(--acc);transform-origin:left bottom;animation:lidOpen .7s .15s both cubic-bezier(.3,.9,.3,1)}
+#mcontent{display:flex;flex-direction:column;min-height:0;overflow:hidden;border-radius:inherit}
+.mh{padding:22px 24px 10px}
+.mh h2{margin:0 0 6px;font-size:21px;overflow-wrap:anywhere;padding-right:34px}
+.mh .mx{position:absolute;right:12px;top:10px}
+#mbody{flex:1;overflow:auto;padding:4px 24px 14px;animation:rise .5s .25s both}
+#mbody iframe{width:100%;height:50vh;border:1px solid var(--line);border-radius:8px;background:#fff}
+.mf{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 24px;border-top:1px solid var(--line)}
+.mf a{margin-left:auto;color:var(--mute);font-size:13px}
+@keyframes boxIn{from{opacity:0;transform:translateY(50px) scale(.8)}to{opacity:1;transform:none}}
+@keyframes lidOpen{from{transform:rotate(0)}to{transform:rotate(-13deg) translateY(-5px)}}
+
+.msg.unread:not(.sel):not(.reply){background:#dde3e1}
+@media(prefers-color-scheme:dark){.msg.unread:not(.sel):not(.reply){background:#2b3836}}
+.box[data-id]{cursor:grab}
+.box.moving{opacity:.35;transform:scale(.94)}
+</style>
+</head>
+<body>
+
+<section id="setup">
+  <h1>Mailbox Sorter</h1>
+  <p>Sort your Gmail into boxes by dragging messages. Boxes here are Gmail labels, so they also show up in Gmail itself. Everything runs in your browser and nothing is sent to any server except Google’s.</p>
+  <div id="steps"><h3>One-time setup</h3>
+  <ol>
+    <li>Open <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> and create a project.</li>
+    <li>Enable the <b>Gmail API</b> (APIs &amp; Services → Library).</li>
+    <li>Set up the OAuth consent screen: choose External, then add your own Gmail address under Test users.</li>
+    <li>Create credentials → OAuth client ID → Web application. Under Authorized JavaScript origins, add <code id="origin"></code></li>
+    <li>Paste the Client ID below.</li>
+  </ol></div>
+  <div class="row">
+    <input id="cid" placeholder="1234567890-abc….apps.googleusercontent.com" aria-label="Google Client ID">
+    <button class="primary" id="signin">Connect Gmail</button>
+  </div>
+  <div id="err" role="alert"></div>
+</section>
+
+<div id="app" class="hide">
+  <aside>
+    <h2 id="who">Mailbox</h2>
+    <div id="sys"></div>
+    <div class="sep">Boxes <button id="newf" title="New box" aria-label="New box">+</button></div>
+    <div id="boxlist"></div>
+    <div class="sep" style="margin-top:24px">Theme</div><select id="theme" aria-label="Theme"><option value="auto">Auto (by month)</option><option value="xmas">Christmas</option><option value="summer">Summer</option><option value="rain">Rainy season</option></select>
+    <div class="sep"><button id="out">Disconnect</button></div>
+  </aside>
+  <main>
+    <div class="bar">
+      <input type="checkbox" id="all" aria-label="Select all">
+      <input type="search" id="q" placeholder="Search this view (e.g. from:amazon)">
+      <button id="refresh">Refresh</button>
+    </div>
+    <div id="acts" class="hide">
+      <b id="count"></b>
+      <select id="dest" aria-label="Destination box"></select>
+      <button class="primary" id="move">Move to box</button>
+      <button id="copy">Also add to box</button>
+      <button id="arch">Archive</button>
+      <button id="trash" class="danger">Trash</button>
+    </div>
+    <div id="list"></div>
+    <section id="boxes" class="hide"></section>
+  </main>
+</div>
+<div id="modal" class="hide"></div>
+<div id="fx" aria-hidden="true"></div>
+<div id="toast" class="hide" role="status"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const CLIENT_ID = '578138443747-1occbldocu3k0iktvmb7p2stf8k8671b.apps.googleusercontent.com'; // public, safe to keep here
+const SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
+const SYSTEM = [['INBOX','Inbox'],['UNREAD','Unread'],['STARRED','Starred'],['SENT','Sent'],['SPAM','Spam'],['TRASH','Trash']];
+let token = null, tc = null, labels = [], cur = 'INBOX', msgs = [], next = null, picked = new Set();
+
+$('#origin').textContent = location.origin;
+if (CLIENT_ID) { $('#steps').classList.add('hide'); $('#cid').classList.add('hide'); $('#signin').textContent = 'Sign in with Google'; }
+$('#cid').value = (() => { try { return localStorage.getItem('cid') || ''; } catch { return ''; } })();
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(t){ const e = $('#toast'); e.textContent = t; e.classList.remove('hide'); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.add('hide'), 2600); }
+
+async function api(path, opt = {}) {
+  const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/' + path, {
+    ...opt, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: opt.body ? JSON.stringify(opt.body) : undefined
+  });
+  if (r.status === 401) { showSetup('Your session expired. Connect again.'); throw new Error('expired'); }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error?.message || r.statusText); }
+  return r.status === 204 ? null : r.json();
+}
+
+function showSetup(msg) { started = false; $('#app').classList.add('hide'); $('#setup').classList.remove('hide'); $('#err').textContent = msg || ''; }
+
+$('#signin').onclick = () => {
+  if (!window.google) { $('#err').textContent = 'Google sign-in is still loading. Try again in a moment.'; return; }
+  $('#err').textContent = ''; getTC().requestAccessToken();
+};
+
+$('#out').onclick = () => { if (token) google.accounts.oauth2.revoke(token); token = null; ['tok', 'exp', 'connected'].forEach(k => { try { localStorage.removeItem(k); } catch {} }); showSetup('Disconnected.'); };
+
+async function start() {
+  $('#setup').classList.add('hide'); $('#app').classList.remove('hide');
+  try {
+    const p = await api('profile'); $('#who').textContent = p.emailAddress;
+    await loadLabels(); await loadMsgs(true);
+    if (LS('auto') !== '0') autoSort(true);
+  } catch (e) { if (e.message !== 'expired') toast(e.message); }
+}
+
+async function loadLabels() {
+  labels = (await api('labels')).labels.filter(l => l.type === 'user').sort((a, b) => a.name.localeCompare(b.name));
+  sortByOrder();
+  renderNav();
+  if (cur === '__boxes') renderBoxes(false);
+  refreshCounts();
+}
+
+function navItem(id, name, del) {
+  return `<div class="nav ${cur === id ? 'on' : ''}" data-id="${esc(id)}" tabindex="0"><span>${esc(name)}</span>${del ? `<button class="x" data-del="${esc(id)}" title="Delete box" aria-label="Delete box ${esc(name)}">✕</button>` : ''}</div>`;
+}
+function renderNav() {
+  $('#sys').innerHTML = navItem('__boxes', '📦 Boxes overview') + SYSTEM.map(([i, n]) => navItem(i, n)).join('');
+  $('#boxlist').innerHTML = labels.length ? labels.map(l => navItem(l.id, l.name, true)).join('') : '<div class="empty" style="padding:10px;text-align:left">No boxes yet. Press + to make one.</div>';
+  $('#dest').innerHTML = labels.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
+  document.querySelectorAll('.nav').forEach(n => {
+    const id = n.dataset.id;
+    n.onclick = e => {
+      if (e.target.dataset.del) return;
+      go(id);
+    };
+    n.onkeydown = e => { if (e.key === 'Enter') n.onclick(e); };
+    n.ondragover = e => { e.preventDefault(); n.classList.add('over'); };
+    n.ondragleave = () => n.classList.remove('over');
+    n.ondrop = e => { e.preventDefault(); n.classList.remove('over'); dropOn(id, e); };
+  });
+  document.querySelectorAll('.x').forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    const l = labels.find(x => x.id === b.dataset.del);
+    if (!confirm(`Delete the box “${l.name}”? Messages stay in Gmail; only the label is removed.`)) return;
+    try { await api('labels/' + l.id, { method: 'DELETE' }); if (cur === l.id) cur = 'INBOX'; await loadLabels(); go(cur); toast('Box deleted'); } catch (er) { toast(er.message); }
+  });
+}
+
+$('#newf').onclick = async () => {
+  const name = prompt('Box name (use Work/Invoices to nest one inside another):');
+  if (!name || !name.trim()) return;
+  try { await api('labels', { method: 'POST', body: { name: name.trim(), labelListVisibility: 'labelShow', messageListVisibility: 'show' } }); await loadLabels(); toast('Box created'); }
+  catch (e) { toast(e.message); }
+};
+
+async function loadMsgs(reset) {
+  const list = $('#list');
+  if (reset) { msgs = []; next = null; picked.clear(); list.innerHTML = '<div class="empty">Loading…</div>'; renderActs(); }
+  try {
+    const q = $('#q').value.trim();
+    const ids = cur === 'UNREAD' ? ['UNREAD', 'INBOX'] : [cur];
+    const url = `messages?maxResults=30&${ids.map(i => 'labelIds=' + encodeURIComponent(i)).join('&')}${q ? '&q=' + encodeURIComponent(q) : ''}${next ? '&pageToken=' + next : ''}`;
+    const r = await api(url);
+    next = r.nextPageToken || null;
+    const full = await Promise.all((r.messages || []).map(m => api(`messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`)));
+    const first = !msgs.length; msgs = msgs.concat(full);
+    renderList(first); markReplies();
+  } catch (e) { if (e.message !== 'expired') list.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+function hdr(m, n) { return (m.payload.headers.find(h => h.name.toLowerCase() === n) || {}).value || ''; }
+function fmtDate(v) {
+  const d = new Date(v); if (isNaN(d)) return '';
+  const now = new Date();
+  return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+function renderList(anim) {
+  const list = $('#list');
+  if (!msgs.length) { list.innerHTML = '<div class="empty">Nothing here.</div>'; return; }
+  list.classList.toggle('fresh', !!anim);
+  list.innerHTML = msgs.map((m, i) => {
+    const from = hdr(m, 'from').replace(/<.*>/, '').replace(/"/g, '').trim() || hdr(m, 'from');
+    return `<div class="msg ${picked.has(m.id) ? 'sel' : ''} ${m.labelIds?.includes('UNREAD') ? 'unread' : ''}" draggable="true" data-id="${m.id}" style="--i:${Math.min(i, 14)}">
+      <input type="checkbox" ${picked.has(m.id) ? 'checked' : ''} aria-label="Select message">
+      <div class="f t" style="color:inherit">${esc(from)}</div>
+      <div class="t" style="cursor:pointer"><span class="s">${esc(hdr(m, 'subject') || '(no subject)')}</span> — ${esc(m.snippet)}</div>
+      <div class="d">${fmtDate(hdr(m, 'date'))}</div></div>`;
+  }).join('') + (next ? '<div class="empty"><button id="more">Load more</button></div>' : '');
+  list.querySelectorAll('.msg').forEach(row => {
+    const id = row.dataset.id;
+    row.querySelector('input').onchange = e => { e.target.checked ? picked.add(id) : picked.delete(id); row.classList.toggle('sel', e.target.checked); renderActs(); };
+    row.onclick = e => { if (e.target.type !== 'checkbox') openMail(id); };
+    row.ondragstart = e => {
+      if (!picked.has(id)) { picked = new Set([id]); document.querySelectorAll('.msg').forEach(r => { const on = picked.has(r.dataset.id); r.classList.toggle('sel', on); r.querySelector('input').checked = on; }); renderActs(); }
+      e.dataTransfer.setData('text/plain', 'mail'); e.dataTransfer.effectAllowed = 'move';
+      setTimeout(() => document.querySelectorAll('.msg.sel').forEach(r => r.classList.add('dragging')), 0);
+    };
+    row.ondragend = () => document.querySelectorAll('.dragging').forEach(r => r.classList.remove('dragging'));
+  });
+  const more = $('#more'); if (more) more.onclick = () => loadMsgs(false);
+  markRows();
+  renderActs();
+}
+
+function renderActs() {
+  $('#acts').classList.toggle('hide', !picked.size);
+  $('#count').textContent = picked.size + ' selected';
+  $('#all').checked = msgs.length > 0 && picked.size === msgs.length;
+}
+$('#all').onchange = e => { picked = e.target.checked ? new Set(msgs.map(m => m.id)) : new Set(); renderList(); };
+$('#refresh').onclick = () => loadMsgs(true);
+$('#q').onkeydown = e => { if (e.key === 'Enter') loadMsgs(true); };
+
+async function modify(add, remove, done) {
+  const ids = [...picked]; if (!ids.length) return;
+  try {
+    document.querySelectorAll('.msg.sel').forEach(r => r.classList.add('out'));
+    await api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: add, removeLabelIds: remove } });
+    toast(done); picked.clear(); await new Promise(r => setTimeout(r, 320)); loadMsgs(true); refreshCounts();
+  } catch (e) { toast(e.message); }
+}
+function dropOn(id) {
+  if (!picked.size || id === '__boxes') return;
+  if (SYSTEM.some(s => s[0] === id)) {
+    if (id === 'INBOX') return modify(['INBOX'], [], 'Moved to Inbox');
+    if (id === 'TRASH') return trash();
+    return toast('Drop messages on one of your boxes.');
+  }
+  const l = labels.find(x => x.id === id);
+  const el = document.querySelector('.nav[data-id="' + id + '"]'); if (el) { el.classList.add('pop'); setTimeout(() => el.classList.remove('pop'), 600); }
+  modify([id], cur === id ? [] : ['INBOX'], `Moved to ${l.name}`);
+}
+async function trash() {
+  if (!confirm(`Move ${picked.size} message(s) to Trash?`)) return;
+  try { await Promise.all([...picked].map(id => api(`messages/${id}/trash`, { method: 'POST' }))); toast('Moved to Trash'); picked.clear(); loadMsgs(true); } catch (e) { toast(e.message); }
+}
+function needBox() { if (!$('#dest').value) { toast('Create a box first.'); return true; } }
+$('#move').onclick = () => { if (!needBox()) modify([$('#dest').value], ['INBOX'], 'Moved to box'); };
+$('#copy').onclick = () => { if (!needBox()) modify([$('#dest').value], [], 'Added to box'); };
+$('#arch').onclick = () => modify([], ['INBOX'], 'Archived');
+$('#trash').onclick = trash;
+
+function go(id) {
+  cur = id; renderNav();
+  const b = id === '__boxes';
+  $('.bar').classList.toggle('hide', b); $('#list').classList.toggle('hide', b); $('#boxes').classList.toggle('hide', !b);
+  if (b) { $('#acts').classList.add('hide'); renderBoxes(true); refreshCounts(); } else loadMsgs(true);
+}
+async function refreshCounts() {
+  try { await Promise.all(labels.map(async l => { const d = await api('labels/' + l.id); l.total = d.messagesTotal; l.unread = d.messagesUnread; })); } catch (e) {}
+  if (cur === '__boxes') renderBoxes(false);
+}
+function countUp(root) {
+  root.querySelectorAll('[data-n]').forEach(el => {
+    const n = +el.dataset.n, t0 = performance.now();
+    (function f(t) { const p = Math.min(1, (t - t0) / 800); el.textContent = Math.round(n * (1 - Math.pow(1 - p, 3))); if (p < 1) requestAnimationFrame(f); })(t0);
+  });
+}
+function renderBoxes(first) {
+  const t = labels.reduce((a, l) => a + (l.total || 0), 0), u = labels.reduce((a, l) => a + (l.unread || 0), 0);
+  const mx = Math.max(1, ...labels.map(l => l.total || 0));
+  const hue = s => [...s].reduce((a, c) => a * 31 + c.charCodeAt(0), 7) % 360;
+  const root = $('#boxes'); root.classList.toggle('still', !first);
+  root.innerHTML = `<h1>${themeNow().e} Your boxes</h1>
+    <div class="mute">${labels.length ? 'Click a box to open it. Drag boxes to arrange them.' : 'You have no boxes yet. Make your first one!'}</div>
+    <div class="tools"><button class="primary" id="sortnow">✨ Auto-sort inbox</button><button id="learn">🧠 Learn from my boxes</button><label><input type="checkbox" id="autoon" ${LS('auto') !== '0' ? 'checked' : ''}> Auto-sort while this page is open</label></div>
+    <div class="stats">${[['Boxes', labels.length], ['Messages sorted', t], ['Unread inside', u]].map(([k, v], i) => `<div class="stat" style="animation-delay:${i * 80}ms"><b data-n="${v}">${v}</b>${k}</div>`).join('')}</div>
+    <div class="grid">${labels.map((l, i) => `<div class="box" tabindex="0" data-id="${esc(l.id)}" style="--i:${i};--h:${hue(l.name)}">
+      <button class="gear" data-g="${esc(l.id)}" title="Edit keywords" aria-label="Edit keywords">⚙</button><h3>${esc(l.name)}</h3><div class="n" ${l.total != null ? `data-n="${l.total}"` : ''}>${l.total ?? '…'}</div>
+      <div class="mute">${l.unread ? l.unread + ' unread' : 'all read'}</div><div class="meter"><i style="--w:${Math.round((l.total || 0) / mx * 100)}%"></i></div></div>`).join('')}
+      <div class="box add" tabindex="0" id="addbox" style="--i:${labels.length};--h:170"><div><span>＋</span>New box</div></div></div>`;
+  root.querySelectorAll('.box[data-id]').forEach(b => { b.onclick = () => go(b.dataset.id); b.onkeydown = e => { if (e.key === 'Enter') go(b.dataset.id); }; });
+  const add = $('#addbox'); add.onclick = () => $('#newf').onclick(); add.onkeydown = e => { if (e.key === 'Enter') add.onclick(); };
+  root.querySelectorAll('.gear').forEach(g => g.onclick = e => {
+    e.stopPropagation();
+    const l = labels.find(x => x.id === g.dataset.g), rules = JSON.parse(LS('rules') || '{}');
+    const k = prompt(`Extra keywords for “${l.name}” (comma separated). Emails containing any of them are sorted here:`, (rules[l.id] || []).join(', '));
+    if (k === null) return;
+    rules[l.id] = k.split(',').map(x => x.trim().toLowerCase()).filter(Boolean); LS('rules', JSON.stringify(rules)); toast('Keywords saved');
+  });
+  const grid = root.querySelector('.grid'); let drag = null, lock = 0;
+  grid.querySelectorAll('.box[data-id]').forEach(b => {
+    b.draggable = true;
+    b.ondragstart = e => { drag = b; root.classList.add('still'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', b.dataset.id); setTimeout(() => b.classList.add('moving'), 0); };
+    b.ondragend = () => {
+      b.classList.remove('moving'); drag = null;
+      const ids = [...grid.querySelectorAll('.box[data-id]')].map(x => x.dataset.id);
+      LS('order', JSON.stringify(ids)); labels.sort((x, y) => ids.indexOf(x.id) - ids.indexOf(y.id)); renderNav();
+    };
+  });
+  grid.ondragover = e => {
+    if (!drag) return; e.preventDefault();
+    const t = e.target.closest('.box[data-id]'); if (!t || t === drag || Date.now() < lock) return;
+    const r = t.getBoundingClientRect(), before = e.clientX < r.left + r.width / 2;
+    const cards = [...grid.children], first = new Map(cards.map(c => [c, c.getBoundingClientRect()]));
+    grid.insertBefore(drag, before ? t : t.nextSibling); lock = Date.now() + 260;
+    cards.forEach(c => {
+      if (c === drag) return; const a = first.get(c), z = c.getBoundingClientRect(), dx = a.left - z.left, dy = a.top - z.top;
+      if (!dx && !dy) return;
+      c.style.transition = 'none'; c.style.transform = `translate(${dx}px,${dy}px)`; c.offsetWidth; c.style.transition = ''; c.style.transform = '';
+    });
+  };
+  grid.ondrop = e => e.preventDefault();
+  $('#sortnow').onclick = () => autoSort(false);
+  $('#learn').onclick = learn;
+  $('#autoon').onchange = e => LS('auto', e.target.checked ? '1' : '0');
+  if (first) countUp(root);
+}
+
+let started = false, rt = null, sorting = false;
+function LS(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch {} return null; }
+
+/* ---- stay signed in on this PC ---- */
+function getTC() {
+  return tc || (tc = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID, scope: SCOPE, callback: onTok,
+    error_callback: () => { if (!token) showSetup('Tap Sign in with Google to continue.'); }
+  }));
+}
+async function onTok(r) {
+  if (r.error) { showSetup('Could not connect: ' + r.error); return; }
+  token = r.access_token; const life = (r.expires_in || 3600) * 1000;
+  LS('tok', token); LS('exp', String(Date.now() + life - 120000)); LS('connected', '1');
+  clearTimeout(rt); rt = setTimeout(() => getTC().requestAccessToken({ prompt: 'none' }), life - 180000);
+  if (!started) { started = true; await start(); }
+}
+(async function boot() {
+  const t = LS('tok'), e = +LS('exp');
+  if (t && e > Date.now()) { token = t; started = true; clearTimeout(rt); rt = setTimeout(() => getTC().requestAccessToken({ prompt: 'none' }), e - Date.now() - 60000); await start(); return; }
+  if (LS('connected')) {
+    $('#setup').classList.add('hide');
+    let n = 0; while (!window.google && n++ < 40) await new Promise(r => setTimeout(r, 100));
+    if (window.google) getTC().requestAccessToken({ prompt: 'none' }); else showSetup('');
+  }
+})();
+
+/* ---- seasonal themes ---- */
+const THEMES = { xmas: { e: '❄', n: 14 }, summer: { e: '☀', n: 6 }, rain: { e: '💧', n: 16 } };
+function autoTheme() { const m = new Date().getMonth(); return (m >= 8 || m === 0) ? 'xmas' : m <= 4 ? 'summer' : 'rain'; }
+function themeNow() { const c = LS('theme') || 'auto'; const k = c === 'auto' ? autoTheme() : c; return { k, ...THEMES[k] }; }
+function applyTheme() {
+  const t = themeNow(); document.documentElement.dataset.theme = t.k; $('#theme').value = LS('theme') || 'auto';
+  $('#fx').innerHTML = Array.from({ length: t.n }, () => `<span style="left:${Math.random() * 100}%;font-size:${10 + Math.random() * 10}px;animation-duration:${t.k === 'rain' ? 4 + Math.random() * 3 : 9 + Math.random() * 10}s;animation-delay:-${Math.random() * 15}s">${t.e}</span>`).join('');
+}
+$('#theme').onchange = e => { LS('theme', e.target.value); applyTheme(); if (cur === '__boxes') renderBoxes(false); };
+applyTheme();
+
+/* ---- auto-sorting ---- */
+const CATS = [
+  { name: /job|career|work|employ|hire|apply|applic/i, kw: ['indeed', 'jobstreet', 'linkedin', 'glassdoor', 'kalibrr', 'bossjob', 'onlinejobs', 'job alert', 'hiring', 'vacanc', 'your application', 'recruit', 'career'] },
+  { name: /shop|commerce|order|lazada|buy|purchase|store/i, kw: ['shopee', 'lazada', 'tiktok shop', 'your order', 'parcel', 'shipped', 'out for delivery', 'delivered', 'tracking', 'spx', 'j&t', 'flash express', 'voucher'] },
+  { name: /bill|bank|financ|payment|money/i, kw: ['statement', 'invoice', 'receipt', 'gcash', 'maya', 'bpi', 'bdo', 'unionbank', 'due date', 'billing'] },
+  { name: /travel|trip|flight|booking/i, kw: ['booking', 'flight', 'itinerary', 'cebu pacific', 'airasia', 'agoda', 'reservation'] },
+  { name: /school|study|class|course|universit|learn/i, kw: ['course', 'assignment', 'university', 'coursera', 'udemy', 'grade'] }
+];
+const GENERIC = /^(gmail|yahoo|outlook|hotmail|icloud|live)\./;
+function dkey(addr) {
+  addr = (addr || '').toLowerCase(); const d = addr.split('@')[1] || ''; if (!d || GENERIC.test(d)) return addr;
+  const p = d.split('.'); return (p.length > 2 && p[p.length - 2].length <= 3 && p[p.length - 1].length === 2 ? p.slice(-3) : p.slice(-2)).join('.');
+}
+function sender(m) { const f = hdr(m, 'from'); const x = f.match(/<([^>]+)>/); return (x ? x[1] : f).trim(); }
+function kwFor(l) {
+  const rules = JSON.parse(LS('rules') || '{}'); let k = [...(rules[l.id] || [])];
+  CATS.forEach(c => { if (c.name.test(l.name)) k.push(...c.kw); });
+  l.name.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3).forEach(w => k.push(w));
+  return k;
+}
+function pickBox(m) {
+  const senders = JSON.parse(LS('senders') || '{}'), key = dkey(sender(m));
+  const text = (hdr(m, 'from') + ' ' + hdr(m, 'subject') + ' ' + (m.snippet || '')).toLowerCase();
+  let best = null, top = 0;
+  labels.forEach(l => {
+    let sc = senders[key] === l.id ? 5 : 0;
+    kwFor(l).forEach(w => { if (text.includes(w)) sc++; });
+    if (sc > top) { top = sc; best = l.id; }
+  });
+  return best;
+}
+async function autoSort(silent) {
+  if (sorting || !labels.length) { if (!silent) toast('Make a box first.'); return; }
+  sorting = true;
+  try {
+    const r = await api('messages?maxResults=60&labelIds=INBOX');
+    const full = await Promise.all((r.messages || []).map(m => api(`messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`)));
+    const plan = {};
+    full.forEach(m => { if ((m.labelIds || []).some(x => labels.some(l => l.id === x))) return; const b = pickBox(m); if (b) (plan[b] = plan[b] || []).push(m.id); });
+    let n = 0;
+    for (const [id, ids] of Object.entries(plan)) { await api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: [id], removeLabelIds: ['INBOX'] } }); n += ids.length; }
+    if (n || !silent) toast(n ? `Auto-sorted ${n} email${n > 1 ? 's' : ''} into boxes` : 'Nothing new to sort');
+    if (n) { refreshCounts(); if (cur === 'INBOX') loadMsgs(true); }
+  } catch (e) { if (e.message !== 'expired') toast(e.message); }
+  sorting = false;
+}
+async function learn() {
+  toast('Learning from your boxes…');
+  try {
+    const tally = {};
+    for (const l of labels) {
+      const r = await api(`messages?maxResults=25&labelIds=${encodeURIComponent(l.id)}`);
+      const full = await Promise.all((r.messages || []).map(m => api(`messages/${m.id}?format=metadata&metadataHeaders=From`)));
+      full.forEach(m => { const k = dkey(sender(m)); if (k) { tally[k] = tally[k] || {}; tally[k][l.id] = (tally[k][l.id] || 0) + 1; } });
+    }
+    const map = {}; Object.entries(tally).forEach(([k, o]) => { map[k] = Object.entries(o).sort((a, b) => b[1] - a[1])[0][0]; });
+    LS('senders', JSON.stringify(map)); toast(`Learned ${Object.keys(map).length} senders. Sorting now…`); autoSort(false);
+  } catch (e) { toast(e.message); }
+}
+setInterval(() => { if (token && started && LS('auto') !== '0') autoSort(true); }, 300000);
+
+/* ---- highlight replies ---- */
+const replyCache = {};
+const REPLYKW = /^(re|aw):|interview|your application|application (status|update|received)|thank you for (applying|your interest)|we received your|shortlist|assessment|offer letter/i;
+function isReply(m) { return (m.labelIds || []).includes('SENT') || REPLYKW.test(hdr(m, 'subject')) || !!replyCache[m.threadId]; }
+function markRows() {
+  document.querySelectorAll('.msg').forEach(r => {
+    const m = msgs.find(x => x.id === r.dataset.id), on = !!m && isReply(m);
+    r.classList.toggle('reply', on);
+    if (on && !r.querySelector('.tag')) r.querySelector('.s').insertAdjacentHTML('afterend', '<span class="tag">↩ Reply</span>');
+  });
+}
+async function markReplies() {
+  const todo = msgs.filter(m => !(m.threadId in replyCache) && !(m.labelIds || []).includes('SENT'));
+  const worker = async () => {
+    while (todo.length) {
+      const m = todo.shift();
+      try { const t = await api(`threads/${m.threadId}?format=minimal`); replyCache[m.threadId] = t.messages.length > 1 && t.messages.some(x => (x.labelIds || []).includes('SENT')); } catch (e) { replyCache[m.threadId] = false; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]); markRows();
+}
+
+/* ---- read mail in a box in the middle ---- */
+const dec = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)));
+function findPart(p, t) { if (p.mimeType === t && p.body && p.body.data) return p; for (const x of p.parts || []) { const r = findPart(x, t); if (r) return r; } return null; }
+function closeMail() { $('#modal').classList.add('hide'); $('#modal').innerHTML = ''; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMail(); });
+async function openMail(id) {
+  const modal = $('#modal'); modal.classList.remove('hide');
+  modal.innerHTML = '<div id="mbox" role="dialog" aria-modal="true"><div class="lid"></div><div id="mcontent"><div class="mh"><h2>Opening…</h2></div></div></div>';
+  modal.onclick = e => { if (e.target === modal) closeMail(); };
+  try {
+    const m = await api(`messages/${id}?format=full`);
+    const h = findPart(m.payload, 'text/html'), t = findPart(m.payload, 'text/plain'), atts = [];
+    (function w(p) { if (p.filename) atts.push(p.filename); (p.parts || []).forEach(w); })(m.payload);
+    const doc = '<base target="_blank"><style>body{font:14px/1.5 system-ui,sans-serif;margin:14px;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style>';
+    const body = h ? `<iframe sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${esc(doc + dec(h.body.data))}"></iframe>`
+      : `<pre style="white-space:pre-wrap;font:inherit;margin:0">${esc(t ? dec(t.body.data) : m.snippet)}</pre>`;
+    $('#mcontent').innerHTML = `<div class="mh"><div class="mx"><button id="mclose" aria-label="Close">✕</button></div>
+      <h2>${esc(hdr(m, 'subject') || '(no subject)')}</h2>
+      <div class="mute"><b>${esc(hdr(m, 'from'))}</b><br>To: ${esc(hdr(m, 'to'))} · ${esc(hdr(m, 'date'))}</div>
+      ${atts.length ? `<div class="mute" style="margin-top:6px">📎 ${atts.map(esc).join(', ')} (download these in Gmail)</div>` : ''}</div>
+      <div id="mbody">${body}</div>
+      <div class="mf"><select id="mdest" aria-label="Box">${labels.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('')}</select>
+      <button class="primary" id="mmove">Move to box</button><button id="march">Archive</button>
+      <a href="https://mail.google.com/mail/u/0/#all/${m.id}" target="_blank" rel="noopener">Open in Gmail ↗</a></div>`;
+    $('#mclose').onclick = closeMail;
+    const act = async (add, rem, msg) => { try { await api('messages/batchModify', { method: 'POST', body: { ids: [id], addLabelIds: add, removeLabelIds: rem } }); toast(msg); closeMail(); loadMsgs(true); refreshCounts(); } catch (e) { toast(e.message); } };
+    $('#mmove').onclick = () => { const d = $('#mdest').value; if (!d) return toast('Create a box first.'); act([d], ['INBOX'], 'Moved to box'); };
+    $('#march').onclick = () => act([], ['INBOX'], 'Archived');
+    if ((m.labelIds || []).includes('UNREAD')) {
+      api('messages/batchModify', { method: 'POST', body: { ids: [id], removeLabelIds: ['UNREAD'] } }).then(() => {
+        const row = document.querySelector(`.msg[data-id="${id}"]`); if (row) row.classList.remove('unread');
+        const x = msgs.find(y => y.id === id); if (x) x.labelIds = x.labelIds.filter(l => l !== 'UNREAD');
+      }).catch(() => {});
+    }
+  } catch (e) { if (e.message !== 'expired') { $('#mcontent').innerHTML = `<div class="mh"><div class="mx"><button id="mclose">✕</button></div><h2>Could not open</h2><div class="mute">${esc(e.message)}</div></div>`; $('#mclose').onclick = closeMail; } }
+}
+
+function sortByOrder() {
+  const o = JSON.parse(LS('order') || '[]');
+  labels.sort((a, b) => { const x = o.indexOf(a.id), y = o.indexOf(b.id); if (x < 0 && y < 0) return a.name.localeCompare(b.name); if (x < 0) return 1; if (y < 0) return -1; return x - y; });
+}
+</script>
+</body>
+</html>
