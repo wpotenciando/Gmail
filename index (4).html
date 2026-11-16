@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mailbox Sorter</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&display=swap">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root{--bg:#eef1ef;--panel:#fff;--ink:#1c2826;--mute:#667572;--line:#d9e0dd;--acc:#0f766e;--accInk:#fff;--sel:#d7ece8;--danger:#b4372c}
+@media(prefers-color-scheme:dark){:root{--bg:#121a19;--panel:#1a2423;--ink:#e6efed;--mute:#8fa19d;--line:#2b3837;--acc:#3cb8a9;--accInk:#08201d;--sel:#21403c;--danger:#ff8a7a}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:15px/1.45 Figtree,system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:7px 12px}
+button:hover{border-color:var(--acc)}
+button.primary{background:var(--acc);color:var(--accInk);border-color:var(--acc);font-weight:600}
+button.danger{color:var(--danger)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+input,select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.hide{display:none!important}
+/* setup */
+#setup{max-width:620px;margin:0 auto;padding:48px 20px}
+#setup h1{font-size:30px;margin:0 0 8px}
+#setup ol{padding-left:20px;color:var(--mute)}
+#setup li{margin:6px 0}
+#setup code{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:13px;word-break:break-all}
+.row{display:flex;gap:8px;margin:16px 0}
+.row input{flex:1}
+#err{color:var(--danger);margin-top:10px}
+/* app */
+#app{display:grid;grid-template-columns:250px 1fr;height:100%}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:16px 12px;overflow:auto}
+aside h2{font-size:15px;margin:0 8px 10px}
+.nav{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-radius:8px;cursor:pointer;gap:6px}
+.nav:hover{background:var(--bg)}
+.nav.on{background:var(--sel);font-weight:600}
+.nav.over{outline:2px dashed var(--acc);background:var(--sel)}
+.nav span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav .x{opacity:0;border:0;background:none;padding:0 4px;color:var(--mute)}
+.nav:hover .x,.nav .x:focus-visible{opacity:1}
+.sep{display:flex;align-items:center;justify-content:space-between;margin:18px 8px 6px;color:var(--mute);font-weight:600;font-size:13px}
+.sep button{padding:1px 9px}
+main{display:flex;flex-direction:column;min-width:0;height:100%}
+.bar{display:flex;gap:8px;align-items:center;padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.bar input[type=search]{flex:1;min-width:140px}
+#acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 16px;background:var(--sel);border-bottom:1px solid var(--line)}
+#list{flex:1;overflow:auto}
+.msg{display:grid;grid-template-columns:28px 190px 1fr 70px;gap:10px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--line);background:var(--panel);cursor:grab}
+.msg.sel{background:var(--sel)}
+.msg.unread .f,.msg.unread .s{font-weight:700}
+.msg .f,.msg .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg .t{color:var(--mute)}
+.msg .s{color:var(--ink)}
+.msg .d{color:var(--mute);font-size:13px;text-align:right}
+.msg a{color:inherit;text-decoration:none}
+.msg a:hover .s{text-decoration:underline}
+.empty{padding:40px 20px;color:var(--mute);text-align:center}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:8px}
+@media(max-width:760px){#app{grid-template-columns:1fr;grid-template-rows:auto 1fr}aside{border-right:0;border-bottom:1px solid var(--line);max-height:34vh}.msg{grid-template-columns:28px 1fr 56px}.msg .f{display:none}}
+</style>
+</head>
+<body>
+
+<section id="setup">
+  <h1>Mailbox Sorter</h1>
+  <p>Sort your Gmail into folders by dragging messages. Folders here are Gmail labels, so they also show up in Gmail itself. Everything runs in your browser and nothing is sent to any server except Google’s.</p>
+  <h3>One-time setup</h3>
+  <ol>
+    <li>Open <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> and create a project.</li>
+    <li>Enable the <b>Gmail API</b> (APIs &amp; Services → Library).</li>
+    <li>Set up the OAuth consent screen: choose External, then add your own Gmail address under Test users.</li>
+    <li>Create credentials → OAuth client ID → Web application. Under Authorized JavaScript origins, add <code id="origin"></code></li>
+    <li>Paste the Client ID below.</li>
+  </ol>
+  <div class="row">
+    <input id="cid" placeholder="1234567890-abc….apps.googleusercontent.com" aria-label="Google Client ID">
+    <button class="primary" id="signin">Connect Gmail</button>
+  </div>
+  <div id="err" role="alert"></div>
+</section>
+
+<div id="app" class="hide">
+  <aside>
+    <h2 id="who">Mailbox</h2>
+    <div id="sys"></div>
+    <div class="sep">Folders <button id="newf" title="New folder" aria-label="New folder">+</button></div>
+    <div id="folders"></div>
+    <div class="sep" style="margin-top:24px"><button id="out">Disconnect</button></div>
+  </aside>
+  <main>
+    <div class="bar">
+      <input type="checkbox" id="all" aria-label="Select all">
+      <input type="search" id="q" placeholder="Search this view (e.g. from:amazon)">
+      <button id="refresh">Refresh</button>
+    </div>
+    <div id="acts" class="hide">
+      <b id="count"></b>
+      <select id="dest" aria-label="Destination folder"></select>
+      <button class="primary" id="move">Move to folder</button>
+      <button id="copy">Also add to folder</button>
+      <button id="arch">Archive</button>
+      <button id="trash" class="danger">Trash</button>
+    </div>
+    <div id="list"></div>
+  </main>
+</div>
+<div id="toast" class="hide" role="status"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
+const SYSTEM = [['INBOX','Inbox'],['UNREAD','Unread'],['STARRED','Starred'],['SENT','Sent'],['SPAM','Spam'],['TRASH','Trash']];
+let token = null, tc = null, labels = [], cur = 'INBOX', msgs = [], next = null, picked = new Set();
+
+$('#origin').textContent = location.origin;
+$('#cid').value = (() => { try { return localStorage.getItem('cid') || ''; } catch { return ''; } })();
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(t){ const e = $('#toast'); e.textContent = t; e.classList.remove('hide'); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.add('hide'), 2600); }
+
+async function api(path, opt = {}) {
+  const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/' + path, {
+    ...opt, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: opt.body ? JSON.stringify(opt.body) : undefined
+  });
+  if (r.status === 401) { showSetup('Your session expired. Connect again.'); throw new Error('expired'); }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error?.message || r.statusText); }
+  return r.status === 204 ? null : r.json();
+}
+
+function showSetup(msg) { $('#app').classList.add('hide'); $('#setup').classList.remove('hide'); $('#err').textContent = msg || ''; }
+
+$('#signin').onclick = () => {
+  const id = $('#cid').value.trim();
+  if (!id) { $('#err').textContent = 'Paste your Client ID first.'; return; }
+  if (!window.google) { $('#err').textContent = 'Google sign-in is still loading. Try again in a moment.'; return; }
+  try { localStorage.setItem('cid', id); } catch {}
+  tc = google.accounts.oauth2.initTokenClient({
+    client_id: id, scope: SCOPE,
+    callback: async r => {
+      if (r.error) { $('#err').textContent = 'Could not connect: ' + r.error; return; }
+      token = r.access_token; await start();
+    }
+  });
+  tc.requestAccessToken();
+};
+
+$('#out').onclick = () => { if (token) google.accounts.oauth2.revoke(token); token = null; showSetup('Disconnected.'); };
+
+async function start() {
+  $('#setup').classList.add('hide'); $('#app').classList.remove('hide');
+  try {
+    const p = await api('profile'); $('#who').textContent = p.emailAddress;
+    await loadLabels(); await loadMsgs(true);
+  } catch (e) { if (e.message !== 'expired') toast(e.message); }
+}
+
+async function loadLabels() {
+  labels = (await api('labels')).labels.filter(l => l.type === 'user').sort((a, b) => a.name.localeCompare(b.name));
+  renderNav();
+}
+
+function navItem(id, name, del) {
+  return `<div class="nav ${cur === id ? 'on' : ''}" data-id="${esc(id)}" tabindex="0"><span>${esc(name)}</span>${del ? `<button class="x" data-del="${esc(id)}" title="Delete folder" aria-label="Delete folder ${esc(name)}">✕</button>` : ''}</div>`;
+}
+function renderNav() {
+  $('#sys').innerHTML = SYSTEM.map(([i, n]) => navItem(i, n)).join('');
+  $('#folders').innerHTML = labels.length ? labels.map(l => navItem(l.id, l.name, true)).join('') : '<div class="empty" style="padding:10px;text-align:left">No folders yet. Press + to make one.</div>';
+  $('#dest').innerHTML = labels.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
+  document.querySelectorAll('.nav').forEach(n => {
+    const id = n.dataset.id;
+    n.onclick = e => {
+      if (e.target.dataset.del) return;
+      cur = id; renderNav(); loadMsgs(true);
+    };
+    n.onkeydown = e => { if (e.key === 'Enter') n.onclick(e); };
+    n.ondragover = e => { e.preventDefault(); n.classList.add('over'); };
+    n.ondragleave = () => n.classList.remove('over');
+    n.ondrop = e => { e.preventDefault(); n.classList.remove('over'); dropOn(id, e); };
+  });
+  document.querySelectorAll('.x').forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    const l = labels.find(x => x.id === b.dataset.del);
+    if (!confirm(`Delete the folder “${l.name}”? Messages stay in Gmail; only the label is removed.`)) return;
+    try { await api('labels/' + l.id, { method: 'DELETE' }); if (cur === l.id) cur = 'INBOX'; await loadLabels(); loadMsgs(true); toast('Folder deleted'); } catch (er) { toast(er.message); }
+  });
+}
+
+$('#newf').onclick = async () => {
+  const name = prompt('Folder name (use Work/Invoices to nest one inside another):');
+  if (!name || !name.trim()) return;
+  try { await api('labels', { method: 'POST', body: { name: name.trim(), labelListVisibility: 'labelShow', messageListVisibility: 'show' } }); await loadLabels(); toast('Folder created'); }
+  catch (e) { toast(e.message); }
+};
+
+async function loadMsgs(reset) {
+  const list = $('#list');
+  if (reset) { msgs = []; next = null; picked.clear(); list.innerHTML = '<div class="empty">Loading…</div>'; renderActs(); }
+  try {
+    const q = $('#q').value.trim();
+    const ids = cur === 'UNREAD' ? ['UNREAD', 'INBOX'] : [cur];
+    const url = `messages?maxResults=30&${ids.map(i => 'labelIds=' + encodeURIComponent(i)).join('&')}${q ? '&q=' + encodeURIComponent(q) : ''}${next ? '&pageToken=' + next : ''}`;
+    const r = await api(url);
+    next = r.nextPageToken || null;
+    const full = await Promise.all((r.messages || []).map(m => api(`messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`)));
+    msgs = msgs.concat(full);
+    renderList();
+  } catch (e) { if (e.message !== 'expired') list.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+function hdr(m, n) { return (m.payload.headers.find(h => h.name.toLowerCase() === n) || {}).value || ''; }
+function fmtDate(v) {
+  const d = new Date(v); if (isNaN(d)) return '';
+  const now = new Date();
+  return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+function renderList() {
+  const list = $('#list');
+  if (!msgs.length) { list.innerHTML = '<div class="empty">Nothing here.</div>'; return; }
+  list.innerHTML = msgs.map(m => {
+    const from = hdr(m, 'from').replace(/<.*>/, '').replace(/"/g, '').trim() || hdr(m, 'from');
+    return `<div class="msg ${picked.has(m.id) ? 'sel' : ''} ${m.labelIds?.includes('UNREAD') ? 'unread' : ''}" draggable="true" data-id="${m.id}">
+      <input type="checkbox" ${picked.has(m.id) ? 'checked' : ''} aria-label="Select message">
+      <div class="f t" style="color:inherit">${esc(from)}</div>
+      <a href="https://mail.google.com/mail/u/0/#all/${m.id}" target="_blank" rel="noopener" class="t"><span class="s">${esc(hdr(m, 'subject') || '(no subject)')}</span> — ${esc(m.snippet)}</a>
+      <div class="d">${fmtDate(hdr(m, 'date'))}</div></div>`;
+  }).join('') + (next ? '<div class="empty"><button id="more">Load more</button></div>' : '');
+  list.querySelectorAll('.msg').forEach(row => {
+    const id = row.dataset.id;
+    row.querySelector('input').onchange = e => { e.target.checked ? picked.add(id) : picked.delete(id); row.classList.toggle('sel', e.target.checked); renderActs(); };
+    row.ondragstart = e => {
+      if (!picked.has(id)) { picked = new Set([id]); renderList(); renderActs(); }
+      e.dataTransfer.setData('text/plain', 'mail'); e.dataTransfer.effectAllowed = 'move';
+    };
+  });
+  const more = $('#more'); if (more) more.onclick = () => loadMsgs(false);
+  renderActs();
+}
+
+function renderActs() {
+  $('#acts').classList.toggle('hide', !picked.size);
+  $('#count').textContent = picked.size + ' selected';
+  $('#all').checked = msgs.length > 0 && picked.size === msgs.length;
+}
+$('#all').onchange = e => { picked = e.target.checked ? new Set(msgs.map(m => m.id)) : new Set(); renderList(); };
+$('#refresh').onclick = () => loadMsgs(true);
+$('#q').onkeydown = e => { if (e.key === 'Enter') loadMsgs(true); };
+
+async function modify(add, remove, done) {
+  const ids = [...picked]; if (!ids.length) return;
+  try {
+    await api('messages/batchModify', { method: 'POST', body: { ids, addLabelIds: add, removeLabelIds: remove } });
+    toast(done); picked.clear(); loadMsgs(true);
+  } catch (e) { toast(e.message); }
+}
+function dropOn(id) {
+  if (!picked.size) return;
+  if (SYSTEM.some(s => s[0] === id)) {
+    if (id === 'INBOX') return modify(['INBOX'], [], 'Moved to Inbox');
+    if (id === 'TRASH') return trash();
+    return toast('Drop messages on one of your folders.');
+  }
+  const l = labels.find(x => x.id === id);
+  modify([id], cur === id ? [] : ['INBOX'], `Moved to ${l.name}`);
+}
+async function trash() {
+  if (!confirm(`Move ${picked.size} message(s) to Trash?`)) return;
+  try { await Promise.all([...picked].map(id => api(`messages/${id}/trash`, { method: 'POST' }))); toast('Moved to Trash'); picked.clear(); loadMsgs(true); } catch (e) { toast(e.message); }
+}
+function needFolder() { if (!$('#dest').value) { toast('Create a folder first.'); return true; } }
+$('#move').onclick = () => { if (!needFolder()) modify([$('#dest').value], ['INBOX'], 'Moved to folder'); };
+$('#copy').onclick = () => { if (!needFolder()) modify([$('#dest').value], [], 'Added to folder'); };
+$('#arch').onclick = () => modify([], ['INBOX'], 'Archived');
+$('#trash').onclick = trash;
+</script>
+</body>
+</html>
